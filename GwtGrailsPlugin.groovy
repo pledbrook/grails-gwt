@@ -1,3 +1,15 @@
+import com.google.gwt.core.ext.TreeLogger
+import com.google.gwt.core.ext.UnableToCompleteException
+import com.google.gwt.dev.GWTCompiler
+import com.google.gwt.dev.cfg.ModuleDef
+import com.google.gwt.dev.cfg.ModuleDefLoader
+import org.apache.commons.io.FileUtils
+import org.apache.commons.logging.Log
+import org.apache.commons.logging.LogFactory
+import org.codehaus.groovy.grails.plugins.support.GrailsPluginUtils
+import org.springframework.core.io.FileSystemResource
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver
+
 /*
  * Copyright 2007 Peter Ledbrook.
  *
@@ -12,514 +24,179 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * This is the grails plugin that will dynamically detect file changes and dynamically recompile GWT modules.
+ *
+ * @author Peter Ledbrook
+ * @author Chris Chen
+ * @since 1.5RC1
+ *
  */
-import java.lang.reflect.Modifier
-
-import org.apache.commons.io.FileUtils
-import org.codehaus.groovy.grails.plugins.support.GrailsPluginUtils
-import org.codehaus.groovy.grails.commons.GrailsClassUtils
-import java.lang.reflect.Method
-
 class GwtGrailsPlugin {
-    private static final GROOVY_METHODS = [
-            'getMetaClass',
-            'getProperty',
-            'invokeMethod',
-            'setMetaClass',
-            'setProperty' ] as Set
-
-    private static final Class COLLECTION_TYPE_ARG_CLASS
-    private static final Class MAP_TYPE_ARG_CLASS
-
-    static {
-        // Check whether the JVM supports annotations.
-        try {
-            // Try to load the Annotation class dynamically.
-            Class.forName('java.lang.annotation.Annotation')
-
-            // The Annotation class was loaded fine, so we can check
-            // for the TypeArg annotation. We load the annotation
-            // class dynamically so that the plugin can be used with
-            // the 1.4 JDK.
-            COLLECTION_TYPE_ARG_CLASS =
-                Class.forName('org.codehaus.groovy.grails.plugins.gwt.annotation.CollectionTypeArg')
-            MAP_TYPE_ARG_CLASS =
-                Class.forName('org.codehaus.groovy.grails.plugins.gwt.annotation.MapTypeArg')
-        }
-        catch (ClassNotFoundException ex) {
-            COLLECTION_TYPE_ARG_CLASS = null
-            MAP_TYPE_ARG_CLASS = null
-        }
-    }
-
-    def version = '0.3-SNAPSHOT'
-    def author = 'Peter Ledbrook'
-    def authorEmail = 'peter@cacoethes.co.uk'
-    def title = 'The Google Web Toolkit for Grails.'
-    def description = '''\
+	def version = '1.5RC1-SNAPSHOT'
+	def author = 'Peter Ledbrook'
+	def authorEmail = 'peter@cacoethes.co.uk'
+	def title = 'The Google Web Toolkit for Grails.'
+	def description = '''\
 Incorporates GWT into Grails. In particular, GWT host pages can be
 GSPs and standard Grails services can be used to handle client RPC
 requests.
 '''
-    def documentation = 'http://grails.codehaus.org/GWT+Plugin'
+	def documentation = 'http://grails.codehaus.org/GWT+Plugin'
 
-    def grailsVersion = GrailsPluginUtils.grailsVersion
-    def observe = [ 'services' ]
+	def grailsVersion = GrailsPluginUtils.grailsVersion
+	def loadAfter = ['controllers', 'services']
+	def watchedResources = ["file:./src/gwt/**/*.*", "file:./src/java/**/*.*"]
 
-    def srcDir = 'src/java'
+	private static final Log LOG = LogFactory.getLog("org.codehaus.groovy.grails.plugins.GwtGrailsPlugin")
+	def moduleMap = null
+	def resolver = new PathMatchingResourcePatternResolver()
+	def outDir = "web-app/gwt"
+	static {
+		//add our own metaclass method to access the java source file
+		ModuleDef.metaClass.findJavaSourceFile = {partialPath -> return findSourceFile(partialPath)}
+	}
 
-    def doWithSpring = {
-        // Generating the java interfaces tends to cause Grails to
-        // reload Jetty in development mode, which then triggers this
-        // closure. To avoid entering an infinite loop of generate ->
-        // restart -> generate, we check whether a system property has
-        // been set.
-        //
-        // On first startup, this property will not be set, but on all
-        // subsequent restarts, it will.
-        if (System.getProperty('gwt.plugin.started')) {
-            return
-        }
 
-        // Iterate through each of the declared services and
-        // configure them for GWT.
-        application.serviceClasses.each { serviceWrapper ->
-            def packageName = getPackage(serviceWrapper)
-            if (packageName != null) {
-                // Generate GWT client interfaces for this service.
-                // The matching group is the package in which to
-                // place the generated interfaces.
-                log.info "Exposing ${serviceWrapper.shortName} as a GWT service."
-                generateClientInterfaces(serviceWrapper, packageName, log)
-            }
-        }
+	def doWithSpring = {
+	}
 
-        // Generated the interfaces, so now set the required system
-        // property to prevent any further calls.
-        System.setProperty('gwt.plugin.started', 'true')
-    }   
+	def doWithApplicationContext = {applicationContext ->
+	}
 
-    def doWithApplicationContext = { applicationContext ->
-    }
+	def doWithWebDescriptor = {xml ->
+		loadGwtModules()
 
-    def doWithWebDescriptor = { xml ->
-        xml.servlet[0] + {
-            servlet {
-                'servlet-name'('GwtRpcServlet')
-                'servlet-class'('org.codehaus.groovy.grails.plugins.gwt.GrailsRemoteServiceServlet')
-            }
-        }
+		xml.servlet[0] + {
+			servlet {
+				'servlet-name'('GwtRpcServlet')
+				'servlet-class'('org.codehaus.groovy.grails.plugins.gwt.GrailsRemoteServiceServlet')
+			}
+		}
 
-        // Create a servlet mapping for each module defined in the
-        // project.
-        def modules = findModules(srcDir)
-        modules.each { module ->
-            xml.'servlet-mapping'[0] + {
-                'servlet-mapping' {
-                    'servlet-name'('GwtRpcServlet')
-                    'url-pattern'("/gwt/$module/rpc")
-                }
-            }
-        }
-    }                                      
+		// Create a servlet mapping for each module defined in the
+		// project.
+		for (HashMap moduleInfoMap: moduleMap.values()) {
+			ModuleDef moduleDef = moduleInfoMap.module
+			xml.'servlet-mapping'[0] + {
+				'servlet-mapping'
+				{
+					'servlet-name'('GwtRpcServlet')
+					'url-pattern'("/gwt/${moduleDef.name}/rpc")
+				}
+			}
+		}
+	}
 
-    def doWithDynamicMethods = { ctx ->
-    }
+	def doWithDynamicMethods = {ctx ->
+	}
 
-    def onChange = { event ->
-        if (application.isServiceClass(event.source)) {
-            // A service has been modified (or created).
-            def serviceWrapper = application.getServiceClass(event.source?.name)
-            def packageName = getPackage(serviceWrapper)
-            println "Change on ${event.source.name}"
-            println "Service: ${serviceWrapper}"
+	def onChange = {event ->
+		if (event.source instanceof FileSystemResource) {
+			//we need to check if the file is located in a module
+			def moduleInfoMaps = getModuleDef(event.source)
+			if (moduleInfoMaps) {
+				//it exists in a module, so let's specifically compile only these module
+				recompileGwtModule(moduleInfoMaps, event.source)
+			}
+		}
+	}
 
-            // Find any generated interfaces that match the modified
-            // service.
-            def matchingInterfaces = []
-            new File(srcDir).eachFileRecurse { file ->
-                if (file.name ==~ "${serviceWrapper.shortName}Async.java") {
-                    def mainInterfaceFile = new File(file.getParentFile(), "${serviceWrapper.shortName}.java")
-                    if (mainInterfaceFile.exists()) {
-                        matchingInterfaces << mainInterfaceFile
-                    }
-                }
-            }
+	def onApplicationChange = {event ->
+	}
 
-            // Does the service expose itself via GWT RPC? If not, then
-            // delete any generated interface files.
-            if (packageName == null) {
-                matchingInterfaces.each { file ->
-                    // Delete both the main interface file and the
-                    // corresponding Async definition.
-                    def asyncInterfaceFile = new File(file.getParentFile(), "${serviceWrapper.shortName}Async.java")
-                    asyncInterfaceFile.delete()
-                    file.delete()
-                }
-            }
-            else {
-                // This service is configured for GWT RPC. Get the
-                // fully-qualified name of the interface.
-                matchingInterfaces.each { file ->
-                    // Get the file's path and replace Windows separators
-                    // with Unix ones.
-                    def path = file.path.replace('\\' as char, '/' as char)
+	def loadGwtModules() {
+		if (moduleMap) return
+		print "Loading available GWT modules from the classpath..."
+		def moduleFiles = resolver.getResources("classpath:**/src/gwt/**/*.gwt.xml") as List
+		moduleFiles += resolver.getResources("classpath:**/src/java/**/*.gwt.xml") as List
+		moduleMap = [:]
+		moduleFiles.each {moduleFile ->
+			def path = moduleFile.URI.toString()
+			def m = path =~ /src\/(?:java|gwt)\/([\w\/]+)\.gwt\.xml$/
+			if (m.count > 0) {
+				def moduleName = m[0][1].replace('/' as char, '.' as char)
+				try {
+					def moduleDef = ModuleDefLoader.loadFromClassPath(TreeLogger.NULL, moduleName)
+					LOG.info "Loaded Module: ${moduleName}"
+					//only store modules with entry points
+					if (moduleDef.getEntryPointTypeNames().size() > 0)
+						moduleMap.put(moduleName, [module: moduleDef, lastCompileTime: 0])
+				} catch (UnableToCompleteException ex) {
+					LOG.warn "Unable to load module ${moduleName}", ex
+				}
+			}
+		}
+		println "Done!"
+	}
 
-                    // Remove the source directory from the path.
-                    path = path.substring(srcDir.length() + 1)
+	/**
+	 * Checks which gwt this file belongs to.  It will search recursively up the file tree.
+	 * If it can't find a module definition within the classpath, then it will return null.
+	 */
+	def getModuleDef(FileSystemResource resource) {
+		loadGwtModules()
+		def path = resource.file.absolutePath
+		def m = path =~ /src\/(?:java|gwt)\/(.*)$/
+		if (m.count == 0) return null
+		def normalizedResource = m[0][1]
 
-                    // Extract the package name from the path.
-                    def pkg = ''
-                    def pos = path.lastIndexOf('/')
-                    if (pos != -1) {
-                        pkg = path.substring(0, pos).replace('/' as char, '.' as char)
-                    }
+		def depModuleInfoMaps = []
+		//find public resource
+		for (HashMap moduleInfoMap: moduleMap.values()) {
+			ModuleDef moduleDef = moduleInfoMap.module
+			//this will effectively skip recompiling when multiple files are modified..
+			if (path.endsWith(".java")) {
+				//change our resource into a class notation
+				def className = normalizedResource.replace(File.separatorChar, '.' as char) - ".java"
+				//find source file
+				if (moduleDef.findJavaSourceFile(className) != null) {
+					//skip if our last compile time is already newer than the resource's modification time
+					if (moduleInfoMap.lastCompileTime > resource.lastModified()) continue
+					LOG.debug "Source file used by module ${moduleDef.name}. Setting module for recompile."
+					depModuleInfoMaps << moduleInfoMap
+				}
+			} else {
+				//subtract the module location from the resource
+				def modulePath = moduleDef.name.substring(0, moduleDef.name.lastIndexOf('.')).replace('.' as char, File.separatorChar)
+				def publicResource = normalizedResource - modulePath
+				//ASSUMPTION: public files must all reside in a subdirectory below the module directory
+				publicResource = publicResource.substring(publicResource.indexOf(File.separatorChar as String, 1) + 1)
+				if (moduleDef.findPublicFile(publicResource) != null) {
+					LOG.debug "Public resource used by module ${moduleDef.name}. Copying resource to module directory."
+					//depModuleInfoMaps << moduleInfoMap
+					//since it's a public resource, let's circumvent the recompile process and copy the resource
+					//file directly to the output directory.  This will drastically increase the reload during dev
+					FileUtils.copyFile(resource.file, new File("${outDir}/${moduleDef.name}/${publicResource}"))
+				}
+			}
+		}
+		return depModuleInfoMaps
+	}
 
-                    // Does this match the package name specified by
-                    // the service?
-                    if (pkg != packageName) {
-                        // Packages don't match, so remove the interface
-                        // files.
-                        def asyncInterfaceFile =
-                            new File(file.getParentFile(), "${serviceWrapper.shortName}Async.java")
-                        asyncInterfaceFile.delete()
-                        file.delete()
-                    }
-                }
-
-                // Now generate the interfaces for the service in the
-                // specified package.
-                log.info "Exposing ${serviceWrapper.shortName} as a GWT service."
-                generateClientInterfaces(serviceWrapper, packageName, log)
-            }
-        }
-    }                                                                                  
-
-    def onApplicationChange = { event ->
-    }
-
-    /**
-     * Determines whether the given service has been configured for
-     * GWT RPC, and if so returns the package in which the corresponding
-     * interfaces should be generated.
-     * @param serviceWrapper (GrailsClass) The Grails service to query.
-     * @return The fully-qualified name of the package in which to put
-     * the generated interfaces.
-     */
-    def getPackage(serviceWrapper) {
-        def exposeList = GrailsClassUtils.getStaticPropertyValue(serviceWrapper.clazz, 'expose')
-
-        // Check whether 'gwt' is in the expose list.
-        def gwtExposed = exposeList?.find { it.startsWith('gwt:') }
-        if (gwtExposed) {
-            def m = gwtExposed =~ 'gwt:(.*)'
-            return m[0][1]
-        }
-        else {
-            return null
-        }
-    }
-
-    /**
-     * Creates the required service and async interfaces for a given
-     * Grails service. This checks to make sure that neither interface
-     * file has been modified since they were last generated. If either
-     * has, then the generation is skipped - we don't want to overwrite
-     * user changes.
-     * @param serviceWrapper (GrailsClass) The Grails service's class.
-     * @param packageName (String) The GWT client package in which to
-     * put the interfaces.
-     * @param log The plugin logger.
-     */
-    def generateClientInterfaces(serviceWrapper, packageName, log) {
-        // Find the directory in which to store the interface files.
-        def outputDir = new File(srcDir, packageName.replace('.' as char, '/' as char))
-
-        // Make sure that the output directory exists so that we can
-        // create the interface files in it.
-        if (!outputDir.exists()) {
-            // The directory doesn't exist - it should really, since
-            // a GWT module should reside here. Give the user the
-            // benefit of the doubt and attempt to create the directory,
-            // but log a warning in case the package is incorrect.
-            log.warn "Directory '${outputDir}' does not exist - creating it now."
-            if (!outputDir.mkdirs()) {
-                log.error "Could not create required output directory."
-                return
-            }
-        }
-
-        // There should be a timestamp file indicating when the interface
-        // files were last generated. Get hold of it.
-        def className = serviceWrapper.shortName
-        def timestampFile = new File(outputDir, "${className}.timestamp")
-
-        // And the generated interface files.
-        def mainFile = new File(outputDir, "${className}.java")
-        def asyncFile = new File(outputDir, "${className}Async.java")
-
-        // Now check that neither the main interface file, nor the
-        // async one, has been modified since the last generation.
-        if (timestampFile.exists()) {
-            if (mainFile.exists() && asyncFile.exists() &&
-                    (mainFile.lastModified() > timestampFile.lastModified() ||
-                     asyncFile.lastModified() > timestampFile.lastModified())) {
-                // Either the main interface file, or the async file (or
-                // both), has been modified since last generation, so skip
-                // the generation this time around.
-                return
-            }
-        }
-        else {
-            // The timestamp doesn't exist, so the interfaces haven't
-            // been generated yet. However, if the files exist already,
-            // we should leave them alone.
-            if (mainFile.exists() && asyncFile.exists()) {
-                return
-            }
-        }
-
-        // Start the content of the main interface definition.
-        def output = new StringBuffer("""\
-package ${packageName};
-
-import com.google.gwt.user.client.rpc.RemoteService;
-
-public interface ${className} extends RemoteService {""")
-
-        // Start the content of the async interface definition.
-        def outputAsync = new StringBuffer("""\
-package ${packageName};
-
-import com.google.gwt.user.client.rpc.AsyncCallback;
-
-public interface ${className}Async {""")
-
-        // Iterate through the methods declared by the Grails service,
-        // adding the appropriate ones to the interface definitions.
-        serviceWrapper.clazz.declaredMethods.each { Method method ->
-            // Skip non-public, static, and Groovy methods.
-            if (!Modifier.isPublic(method.modifiers) ||
-                    Modifier.isStatic(method.modifiers) ||
-                    GROOVY_METHODS.contains(method.name)) {
-                return
-            }
-
-            // Handle any TypeArg annotations on this method and its
-            // parameters.
-            if (COLLECTION_TYPE_ARG_CLASS != null) {
-                handleTypeArg(output, method)
-            }
-
-            // Output this method definition.
-            output << "\n    ${getType(method.returnType)} ${method.name}("
-            outputAsync << "\n    void ${method.name}("
-
-            // Handle the method's parameters.
-            def paramTypes = method.parameterTypes
-            for (int i in 0..<paramTypes.size()) {
-                if (i > 0) {
-                    output << ', '
-                    outputAsync << ', '
-                }
-
-                def paramString = "${getType(paramTypes[i])} arg${i}"
-                output << paramString
-                outputAsync << paramString
-            }
-
-            // Close the method off in the main interface definition.
-            output << ');'
-
-            // The async interface definition requires an extra parameter
-            // on the method.
-            if (paramTypes.size() > 0) {
-                outputAsync << ', '
-            }
-            outputAsync << 'AsyncCallback callback);'
-        }
-
-        // Close the interface definitions off.
-        output << '\n}\n'
-        outputAsync << '\n}\n'
-
-        // Write the definitions to the appropriate files.
-        mainFile.write(output.toString())
-        asyncFile.write(outputAsync.toString())
-
-        // Now update/create the timestamp file so that we know when
-        // these interface files were generated.
-        FileUtils.touch(timestampFile)
-    }
-
-    /**
-     * Returns the string representation of the given type. For example,
-     * 'java.lang.String', 'int', 'java.lang.String[]', 'boolean[][][]'.
-     */
-    def getType(clazz) {
-        if (!clazz.array) {
-            // If the type is not an array, we can simply return its
-            // name.
-            return clazz.name
-        }
-        else {
-            // The class name contains some number of '[' characters
-            // indicating the dimensions of the array.
-            def dimensions = clazz.name.count('[')
-
-            // To get the base type of the array, we have to recurse
-            // through the component types.
-            def type = clazz.componentType
-            for (int i in 1..<dimensions) {
-                type = type.componentType
-            }
-
-            return type.name + '[]' * dimensions
-        }
-    }
-
-    /**
-     * Checks for any TypeArg annotations on a given method and writes
-     * the appropriate javadoc with '@gwt.typeArgs' tags if necessary.
-     * @param output (output stream, string buffer) The stream or buffer
-     * to write the javadoc to. The only requirement is that is supports
-     * the '<<' operator.
-     * @param method (Method) The method definition to process.
-     */
-    def handleTypeArg(output, method) {
-        // Determines whether we have started writing the javadoc
-        // comment or not.
-        def commentStarted = false
-
-        // Handle the method's parameters.
-        def paramAnns = method.parameterAnnotations
-        def paramTypes = method.parameterTypes
-        for (int i in 0..<paramAnns.size()) {
-            if (paramAnns[i].size() > 0) {
-                // Look for a TypeArg annotation on this parameter.
-                paramAnns[i].each { ann ->
-                    if (COLLECTION_TYPE_ARG_CLASS.isInstance(ann) || MAP_TYPE_ARG_CLASS.isInstance(ann)) {
-                        checkTypeArg(paramTypes[i], ann)
-
-                        // Found it. So add a GWT typeArgs javadoc for
-                        // it.
-                        writeTypeArgEntry(output, ann, "arg$i")
-                    }
-                }
-            }
-        }
-
-        // Check for a TypeArg annotation on the method itself. This
-        // will apply to the return type of the method.
-        def ann = method.getAnnotation(COLLECTION_TYPE_ARG_CLASS)
-        if (!ann) ann = method.getAnnotation(MAP_TYPE_ARG_CLASS)
-        if (ann) {
-            checkTypeArg(method.returnType, ann)
-            if (!commentStarted) {
-                startTypeArgComment(output)
-                commentStarted = true
-            }
-            writeTypeArgEntry(output, ann, null)
-        }
-
-        // Close the javadoc comment if we started one.
-        if (commentStarted) {
-            endTypeArgComment(output)
-        }
-    }
-
-    /**
-     * Checks whether a TypeArg annotation matches the given type. If
-     * it doesn't, an exception is thrown.
-     * @param type (Class) The type to check the annotation against.
-     * Should either implement Collection or Map.
-     * @param ann (Annotation) The TypeArg annotation to check.
-     */
-    def checkTypeArg(type, ann) {
-        if (Collection.isAssignableFrom(type)) {
-            if (!COLLECTION_TYPE_ARG_CLASS.isInstance(ann)) {
-                throw new RuntimeException(
-                        "TypeArg error: annotation is not of type CollectionTypeArg, " +
-                        "but the corresponding type is a Collection.")
-            }
-        }
-        else if (Map.isAssignableFrom(type)) {
-            if (!MAP_TYPE_ARG_CLASS.isInstance(ann)) {
-                throw new RuntimeException(
-                        "TypeArg error: annotation is not of type MapTypeArg, " +
-                        "but the corresponding type is a Map.")
-            }
-        }
-        else {
-            throw new RuntimeException(
-                    "TypeArg error: annotation present, but the corresponding type " +
-                    "is neither a Collection nor a Map.")
-        }
-    }
-
-    /**
-     * Writes the start of a javadoc comment to the given output.
-     */
-    def startTypeArgComment(output) {
-        output << '\n    /**'
-    }
-
-    /**
-     * Writes the end of a javadoc comment to the given output.
-     */
-    def endTypeArgComment(output) {
-        output << '\n     */'
-    }
-
-    /**
-     * Writes a '@gwt.typeArgs' javadoc entry for the given annotation
-     * and parameter name.
-     * @param output (stream, buffer) The output to write the entry to.
-     * The only requirement is that it implements the '<<' operator.
-     * @param ann (Annotation) The TypeArg annotation to generate the
-     * GWT javadoc tag for.
-     * @param paramName (String) The parameter name as specified in the
-     * corresponding method signature. Use <code>null</code> if the tag
-     * corresponds to a return type.
-     */
-    def writeTypeArgEntry(output, ann, paramName) {
-        output << '\n     * @gwt.typeArgs'
-        if (paramName) {
-            output << ' ' << paramName
-        }
-        output << ' <'
-        if (MAP_TYPE_ARG_CLASS.isInstance(ann)) {
-            output << ann.key().name << ', '
-        }
-        output << ann.value().name << '>'
-    }
-
-    /**
-     * Searches a given directory for any GWT module files, and
-     * returns a list of their fully-qualified names.
-     * @param searchDir A string path specifying the directory
-     * to search in.
-     * @return a list of fully-qualified module names.
-     */
-    def findModules(searchDir) {
-        def modules = []
-        def baseLength = searchDir.size()
-
-        new File(searchDir).eachFileRecurse { file ->
-            // Replace Windows separators with Unix ones.
-            file = file.path.replace('\\' as char, '/' as char)
-
-            // Chop off the search directory.
-            file = file.substring(baseLength + 1)
-
-            // Now check whether this path matches a module file.
-            def m = file =~ /([\w\/]+)\.gwt\.xml$/
-            if (m.count > 0) {
-                // Extract the fully-qualified module name.
-                modules << m[0][1].replace('/' as char, '.' as char)
-            }
-        }
-
-        return modules
-    }
+	/**
+	 * Runs the GWTCompiler to recompile the module
+	 */
+	def recompileGwtModule(moduleInfoMaps, resource) {
+		moduleInfoMaps.each {moduleInfoMap ->
+			def module = moduleInfoMap.module
+			print "Recompiling GWT module ${module.name}..."
+			try {
+				//refresh will update new/removed/modified/stale files
+				module.refresh(TreeLogger.NULL)
+				GWTCompiler compiler = new GWTCompiler()
+				compiler.setStyleObfuscated()
+				compiler.setOutDir(new File(outDir))
+				compiler.setModuleName(module.name)
+				compiler.distill(TreeLogger.NULL, module)
+				println "Done!"
+				moduleInfoMap.lastCompileTime = System.currentTimeMillis()
+			} catch (InterruptedException ex) {
+				LOG.warn "Interrupted while waiting for compiler to finish"
+			} catch (UnableToCompleteException ex) {
+				println "ERROR!"
+				LOG.error "Unable to recompile module ${module.name}", ex
+			}
+		}
+	}
 }

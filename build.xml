@@ -13,7 +13,7 @@
     <!-- Load up the groovyc task -->
     <taskdef name="groovyc" classname="org.codehaus.groovy.ant.GroovycTask">
         <classpath>
-            <pathelement location="${grails.dir}/groovy-all-1.1-beta-3-SNAPSHOT.jar"/>
+            <pathelement location="${grails.dir}/groovy-all-1.5.6.jar"/>
         </classpath>
     </taskdef>
 
