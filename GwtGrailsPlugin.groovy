@@ -52,11 +52,8 @@ requests.
 	def moduleMap = null
 	def resolver = new PathMatchingResourcePatternResolver()
 	def outDir = "web-app/gwt"
-	static {
-		//add our own metaclass method to access the java source file
-		ModuleDef.metaClass.findJavaSourceFile = {partialPath -> return findSourceFile(partialPath)}
-	}
-
+	//default to pretty output style for development purposes
+	def outputStyle = System.getProperty("gwt.output.style", "PRETTY").toUpperCase()
 
 	def doWithSpring = {
 	}
@@ -100,7 +97,7 @@ requests.
 	def onApplicationChange = {event ->
 	}
 
-	/** finds and loads gwt modules in our classpath    */
+	/** finds and loads gwt modules in our classpath     */
 	def loadGwtModules() {
 		if (moduleMap) return
 		print "Loading available GWT modules from the classpath..."
@@ -127,7 +124,7 @@ requests.
 		println "Done!"
 	}
 
-	/** parse the gwt file to retrieve the inherited modules    */
+	/** parse the gwt file to retrieve the inherited modules     */
 	def getInheritedModules(File modulePath) {
 		def depModules = []
 		modulePath.eachLine {line ->
@@ -168,6 +165,7 @@ requests.
 					//change our resource into a class notation
 					def className = normalizedResource.replace(File.separatorChar, '.' as char) - ".java"
 					//find source file
+					moduleDef.metaClass.findJavaSourceFile = {partialPath -> return findSourceFile(partialPath)}
 					if (moduleDef.findJavaSourceFile(className) != null) {
 						//skip if our last compile time is already newer than the resource's modification time
 						if (moduleInfoMap.lastCompileTime < resource.lastModified()) {
@@ -226,7 +224,17 @@ requests.
 			//refresh will update new/removed/modified/stale files
 			module.refresh(TreeLogger.NULL)
 			GWTCompiler compiler = new GWTCompiler()
-			compiler.setStyleObfuscated()
+			switch (outputStyle) {
+				case "OBF":
+					compiler.setStyleObfuscated()
+					break
+				case "PRETTY":
+					compiler.setStylePretty()
+					break
+				case "DETAILED":
+					compiler.setStyleDetailed()
+					break
+			}
 			compiler.setOutDir(new File(outDir))
 			compiler.setModuleName(module.name)
 			compiler.distill(TreeLogger.NULL, module)

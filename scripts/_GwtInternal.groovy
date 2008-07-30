@@ -25,7 +25,7 @@ if (!(getBinding().variables.containsKey("gwtModuleList"))) {
 // Common properties and closures (used as re-usable functions).
 gwtHome = Ant.antProject.properties."env.GWT_HOME"
 gwtOutputPath = "${basedir}/web-app/gwt"
-gwtOutputStyle = System.getProperty("gwt.output.style") ?: "OBF"
+gwtOutputStyle = System.getProperty("gwt.output.style","OBF").toUpperCase()
 srcDir = "src/gwt"
 grailsSrcDir = "src/java"
 
