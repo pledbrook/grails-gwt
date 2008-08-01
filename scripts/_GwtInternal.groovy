@@ -14,12 +14,12 @@ import org.codehaus.groovy.grails.commons.GrailsApplication as GA
 //
 // The events mechanism is a source of great frustration!
 if (!(getBinding().variables.containsKey("gwtForceCompile"))) {
-	gwtForceCompile = false
+    gwtForceCompile = false
 }
 
 // We do the same for 'gwtModuleList'.
 if (!(getBinding().variables.containsKey("gwtModuleList"))) {
-	gwtModuleList = null
+    gwtModuleList = null
 }
 
 // Common properties and closures (used as re-usable functions).
@@ -33,10 +33,10 @@ grailsSrcDir = "src/java"
  * A target to check for existence of the GWT Home
  */
 target(checkGwtHome: "Stops if GWT_HOME does not exist") {
-	if (!gwtHome) {
-		event("StatusFinal", ["GWT must be installed and GWT_HOME environment must be set."])
-		exit(1)
-	}
+    if (!gwtHome) {
+        event("StatusFinal", ["GWT must be installed and GWT_HOME environment must be set."])
+        exit(1)
+    }
 }
 
 //
@@ -53,142 +53,144 @@ target(checkGwtHome: "Stops if GWT_HOME does not exist") {
 //                   application will be compiled.
 //
 target(compileGwtModules: "Compiles any GWT modules in 'src/gwt'.") {
-	depends(checkVersion, checkGwtHome)
+    depends(checkVersion, checkGwtHome)
 
-	// This triggers the Events scripts in the application and plugins.
-	event("GwtCompileStart", ["Starting to compile the GWT modules."])
+    // This triggers the Events scripts in the application and plugins.
+    event("GwtCompileStart", ["Starting to compile the GWT modules."])
 
-	// Compile any GWT modules. This requires the GWT 'dev' JAR file,
-	// so the user must have defined the GWT_HOME environment variable
-	// so that we can locate that JAR.
-	def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", true)
-	event("StatusUpdate", ["Compiling GWT modules"])
+    // Compile any GWT modules. This requires the GWT 'dev' JAR file,
+    // so the user must have defined the GWT_HOME environment variable
+    // so that we can locate that JAR.
+    def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", true)
+    event("StatusUpdate", ["Compiling GWT modules"])
 
-	modules.each {moduleName ->
-		// Only run the compiler if this is production mode or
-		// the 'nocache' file is older than any files in the module directory.
-		if (!gwtForceCompile &&
-				GU.environment != GA.ENV_PRODUCTION &&
-				new File("${gwtOutputPath}/${moduleName}/${moduleName}.nocache.js").exists()) {
-			// We can skip this module.
-			return
-		}
+    modules.each {moduleName ->
+        // Only run the compiler if this is production mode or
+        // the 'nocache' file is older than any files in the module directory.
+        if (!gwtForceCompile &&
+                GU.environment != GA.ENV_PRODUCTION &&
+                new File("${gwtOutputPath}/${moduleName}/${moduleName}.nocache.js").exists()) {
+            // We can skip this module.
+            return
+        }
 
-		event("StatusUpdate", ["Module: ${moduleName}"])
-		gwtRun("com.google.gwt.dev.GWTCompiler") {
-			jvmarg(value: '-Djava.awt.headless=true')
-			arg(value: '-style')
-			arg(value: gwtOutputStyle)
-			arg(value: "-out")
-			arg(value: gwtOutputPath)
-			arg(value: moduleName)
-		}
-	}
-	event("StatusUpdate", ["Finished compiling GWT modules"])
+        event("StatusUpdate", ["Module: ${moduleName}"])
+        gwtRun("com.google.gwt.dev.GWTCompiler") {
+            jvmarg(value: '-Djava.awt.headless=true')
+            arg(value: '-style')
+            arg(value: gwtOutputStyle)
+            arg(value: "-out")
+            arg(value: gwtOutputPath)
+            arg(value: moduleName)
+        }
+    }
+    event("StatusUpdate", ["Finished compiling GWT modules"])
 
-	event("GwtCompileEnd", ["Finished compiling the GWT modules."])
+    event("GwtCompileEnd", ["Finished compiling the GWT modules."])
+
+    event("GwtCompileEnd", [ "Finished compiling the GWT modules." ])
 }
 
 target(compileI18n: "Compiles any i18n properties files for any GWT modules in 'src/gwt'.") {
-	depends(checkVersion, checkGwtHome)
+    depends(checkVersion, checkGwtHome)
 
-	// This triggers the Events scripts in the application and plugins.
-	event("GwtCompileI18nStart", ["Starting to compile the i18n properties files."])
+    // This triggers the Events scripts in the application and plugins.
+    event("GwtCompileI18nStart", ["Starting to compile the i18n properties files."])
 
-	// Compile any i18n properties files that match the filename
-	// "<Module>Constants.properties".
-	def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", false)
-	modules += gwtModuleList ?: findModules("${basedir}/${grailsSrcDir}", false)
+    // Compile any i18n properties files that match the filename
+    // "<Module>Constants.properties".
+    def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", false)
+    modules += gwtModuleList ?: findModules("${basedir}/${grailsSrcDir}", false)
 
-	event("StatusUpdate", ["Compiling GWT i18n properties files"])
+    event("StatusUpdate", ["Compiling GWT i18n properties files"])
 
-	modules.each {moduleName ->
-		event("StatusUpdate", ["Module: ${moduleName}"])
+    modules.each {moduleName ->
+        event("StatusUpdate", ["Module: ${moduleName}"])
 
-		// Split the module name into package and name parts. The
-		// package part includes the trailing '.'.
-		def pkg = ""
-		def pos = moduleName.lastIndexOf('.')
-		if (pos > -1) {
-			pkg = moduleName[0..pos]
-			moduleName = moduleName[(pos + 1)..-1]
-		}
+        // Split the module name into package and name parts. The
+        // package part includes the trailing '.'.
+        def pkg = ""
+        def pos = moduleName.lastIndexOf('.')
+        if (pos > -1) {
+            pkg = moduleName[0..pos]
+            moduleName = moduleName[(pos + 1)..-1]
+        }
 
-		// Check whether the corresponding properties file exists.
-		def i18nName = "${pkg}client.${moduleName}Constants"
-		def i18nPath = new File(srcDir, i18nName.replace('.' as char, '/' as char) + ".properties")
+        // Check whether the corresponding properties file exists.
+        def i18nName = "${pkg}client.${moduleName}Constants"
+        def i18nPath = new File(srcDir, i18nName.replace('.' as char, '/' as char) + ".properties")
 
-		if (!i18nPath.exists()) {
-			event("StatusFinal", ["No i18n file found"])
-		}
-		else {
-			gwtRun("com.google.gwt.i18n.tools.I18NSync") {
-				arg(value: "-out")
-				arg(value: srcDir)
-				arg(value: i18nName)
-			}
+        if (!i18nPath.exists()) {
+            event("StatusFinal", ["No i18n file found"])
+        }
+        else {
+            gwtRun("com.google.gwt.i18n.tools.I18NSync") {
+                arg(value: "-out")
+                arg(value: srcDir)
+                arg(value: i18nName)
+            }
 
-			event("StatusUpdate", ["Created class ${i18nName}"])
-		}
-	}
+            event("StatusUpdate", ["Created class ${i18nName}"])
+        }
+    }
 
-	event("GwtCompileI18nEnd", ["Finished compiling the i18n properties files."])
+    event("GwtCompileI18nEnd", ["Finished compiling the i18n properties files."])
 }
 
 target(gwtClean: "Cleans the files generated by GWT.") {
-	// Start by removing the directory containing all the javascript
-	// files.
-	Ant.delete(dir: gwtOutputPath)
+    // Start by removing the directory containing all the javascript
+    // files.
+    Ant.delete(dir: gwtOutputPath)
 
-	// Now remove any generated i18n files.
-	def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", false)
-	modules += gwtModuleList ?: findModules("${basedir}/${grailsSrcDir}", false)
+    // Now remove any generated i18n files.
+    def modules = gwtModuleList ?: findModules("${basedir}/${srcDir}", false)
+    modules += gwtModuleList ?: findModules("${basedir}/${grailsSrcDir}", false)
 
-	modules.each {moduleName ->
-		// Split the module name into package and name parts. The
-		// package part includes the trailing '.'.
-		def pkg = ""
-		def pos = moduleName.lastIndexOf('.')
-		if (pos > -1) {
-			pkg = moduleName[0..pos]
-			moduleName = moduleName[(pos + 1)..-1]
-		}
+    modules.each {moduleName ->
+        // Split the module name into package and name parts. The
+        // package part includes the trailing '.'.
+        def pkg = ""
+        def pos = moduleName.lastIndexOf('.')
+        if (pos > -1) {
+            pkg = moduleName[0..pos]
+            moduleName = moduleName[(pos + 1)..-1]
+        }
 
-		// Delete the corresponding constants file. If it doesn't
-		// exist, that doesn't matter: nothing will happen.
-		def pkgPath = pkg.replace('.' as char, '/' as char)
-		def i18nPath = "${basedir}/${srcDir}/${pkgPath}client/${moduleName}Constants.java"
-		Ant.delete(file: i18nPath)
-	}
+        // Delete the corresponding constants file. If it doesn't
+        // exist, that doesn't matter: nothing will happen.
+        def pkgPath = pkg.replace('.' as char, '/' as char)
+        def i18nPath = "${basedir}/${srcDir}/${pkgPath}client/${moduleName}Constants.java"
+        Ant.delete(file: i18nPath)
+    }
 }
 
 gwtRun = {String className, Closure body ->
-	Ant.java(classname: className, fork: "true") {
-		jvmarg(value: "-Xmx256m")
-		// Have to prefix this with 'Ant' because the Init
-		// script includes a 'classpath' target.
-		Ant.classpath {
-			fileset(dir: "${gwtHome}") {
-				include(name: "gwt-dev*.jar")
-				include(name: "gwt-user.jar")
-			}
+    Ant.java(classname: className, fork: "true") {
+        jvmarg(value: "-Xmx256m")
+        // Have to prefix this with 'Ant' because the Init
+        // script includes a 'classpath' target.
+        Ant.classpath {
+            fileset(dir: "${gwtHome}") {
+                include(name: "gwt-dev*.jar")
+                include(name: "gwt-user.jar")
+            }
 
-			// Include a GWT-specific lib directory if it exists.
-			if (new File("${basedir}/lib/gwt").exists()) {
-				fileset(dir: "${basedir}/lib/gwt") {
-					include(name: "*.jar")
-				}
-			}
-			//must include src/java and src/gwt in classpath so that the source files can be translated
-			if (new File("${basedir}/${srcDir}").exists()) {
-				pathElement(location: "${basedir}/${srcDir}")
-			}
-			pathElement(location: "${basedir}/${grailsSrcDir}")
-		}
+            // Include a GWT-specific lib directory if it exists.
+            if (new File("${basedir}/lib/gwt").exists()) {
+                fileset(dir: "${basedir}/lib/gwt") {
+                    include(name: "*.jar")
+                }
+            }
+            //must include src/java and src/gwt in classpath so that the source files can be translated
+            if (new File("${basedir}/${srcDir}").exists()) {
+                pathElement(location: "${basedir}/${srcDir}")
+            }
+            pathElement(location: "${basedir}/${grailsSrcDir}")
+        }
 
-		body.delegate = delegate
-		body()
-	}
+        body.delegate = delegate
+        body()
+    }
 }
 
 /**
@@ -200,27 +202,27 @@ gwtRun = {String className, Closure body ->
  * @return a list of fully-qualified module names.
  */
 def findModules(searchDir, entryPointOnly) {
-	def modules = []
-	def baseLength = searchDir.size()
+    def modules = []
+    def baseLength = searchDir.size()
 
-	def searchDirFile = new File(searchDir)
-	if (searchDirFile.exists()) {
-	new File(searchDir).eachFileRecurse {file ->
-		// Chop off the search directory.
-		def filePath = file.path.substring(baseLength + 1)
+    def searchDirFile = new File(searchDir)
+    if (searchDirFile.exists()) {
+    new File(searchDir).eachFileRecurse {file ->
+        // Chop off the search directory.
+        def filePath = file.path.substring(baseLength + 1)
 
-		// Now check whether this path matches a module file.
-		def m = filePath =~ /([\w\/]+)\.gwt\.xml$/
-		if (m.count > 0) {
-			// now check if this module has an entry point
-			// if there's no entry point, then it's not necessary to compile the module
-			if (!entryPointOnly || file.text =~ /entry-point/) {
-				// Extract the fully-qualified module name.
-				modules << m[0][1].replace(File.separatorChar, '.' as char)
-			}
-		}
-	}
-	}
+        // Now check whether this path matches a module file.
+        def m = filePath =~ /([\w\/]+)\.gwt\.xml$/
+        if (m.count > 0) {
+            // now check if this module has an entry point
+            // if there's no entry point, then it's not necessary to compile the module
+            if (!entryPointOnly || file.text =~ /entry-point/) {
+                // Extract the fully-qualified module name.
+                modules << m[0][1].replace(File.separatorChar, '.' as char)
+            }
+        }
+    }
+    }
 
-	return modules
+    return modules
 }
